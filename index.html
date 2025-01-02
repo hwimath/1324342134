@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>소수의 뺄셈</title>
+  <!-- MathJax 라이브러리: LaTeX 문법으로 수식을 렌더링 -->
+  <script src="https://cdn.jsdelivr.net/npm/mathjax@2.7.5/MathJax.js?config=TeX-AMS_CHTML"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1, h2 {
+      text-align: center;
+    }
+    .hidden {
+      display: none;
+    }
+    #gameScreen, #endScreen {
+      margin-top: 20px;
+    }
+    .energy-bar-container {
+      position: relative;
+      width: 100%;
+      height: 20px;
+      background-color: #eee;
+      margin: 10px 0;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    .energy-bar {
+      position: absolute;
+      left: 0;
+      top: 0;
+      height: 100%;
+      background-color: #76c7c0;
+      width: 100%;
+      transition: width 0.2s linear;
+    }
+    .info {
+      margin-top: 10px;
+    }
+    #response {
+      margin-top: 10px;
+      white-space: pre-wrap;
+      background: #fafafa;
+      border: 1px solid #ccc;
+      padding: 10px;
+    }
+    #overallTime {
+      font-weight: bold;
+      color: #333;
+    }
+  </style>
+</head>
+<body>
+  <h1>소수의 뺄셈 게임</h1>
+
+  <!-- 시작 화면 -->
+  <div id="startScreen">
+    <h2>이름을 입력하고 난이도를 선택하세요</h2>
+    <div>
+      <label for="playerName">이름: </label>
+      <input type="text" id="playerName" placeholder="이름 입력" />
+    </div>
+    <div style="margin-top: 10px;">
+      <label><input type="radio" name="difficulty" value="최상" /> 최상(20초)</label><br/>
+      <label><input type="radio" name="difficulty" value="상" /> 상(30초)</label><br/>
+      <label><input type="radio" name="difficulty" value="중" /> 중(40초)</label><br/>
+      <label><input type="radio" name="difficulty" value="하" checked /> 하(시간 제한 없음)</label><br/>
+    </div>
+    <button style="margin-top: 10px;" onclick="startGame()">게임 시작</button>
+  </div>
+
+  <!-- 게임 진행 화면 -->
+  <div id="gameScreen" class="hidden">
+    <div class="energy-bar-container">
+      <div id="energyBar" class="energy-bar"></div>
+    </div>
+    <div class="info">
+      <div id="overallTime">총 게임 시간: 0초</div>
+      <div id="chanceDisplay">남은 기회: 3</div>
+      <div id="scoreDisplay">점수: 0</div>
+    </div>
+
+    <h2 id="problemText"></h2>
+    <!-- MathJax로 수식을 깔끔하게 렌더링하기 위해 아래에 식을 넣습니다. -->
+    <!-- 예: \( 1.24 - 0.23 = \) -->
+    <div>
+      <input type="number" id="answerInput" step="0.01" placeholder="정답 입력" />
+      <button onclick="submitAnswer()">확인</button>
+    </div>
+    <div id="feedback"></div>
+  </div>
+
+  <!-- 게임 종료 화면(3회 오답 또는 플레이어가 직접 종료 시) -->
+  <div id="endScreen" class="hidden">
+    <h2>게임이 종료되었습니다.</h2>
+    <div id="finalScoreDisplay"></div>
+    <button onclick="sendResult()">결과 전송</button>
+    <div id="response"></div>
+  </div>
+
+  <script>
+    // ====== 전역 변수 선언 ======
+    let playerName = "";
+    let difficulty = "하";
+
+    let timeLimit = 0;          // 문제 하나당 주어지는 제한 시간 (최상:20, 상:30, 중:40, 하:0(무제한))
+    let timer = null;           // 문제 하나당 에너지바 감소 타이머
+    let gameTime = 0;           // 전체 게임 시간(초)
+    let gameTimeInterval = null; // 전체 게임 시간 카운트용 Interval
+
+    let score = 0;              // 현재 점수
+    let chance = 3;             // 남은 기회(3회 틀리면 종료)
+    let correctAnswer = null;   // 현재 문제의 정답
+    let isGameOver = false;     // 게임 종료 여부
+
+    // ====== 게임 시작 ======
+    function startGame() {
+      const nameInput = document.getElementById("playerName");
+      playerName = nameInput.value.trim();
+      if (playerName === "") {
+        alert("이름을 입력해 주세요!");
+        return;
+      }
+
+      // 난이도 확인
+      const diffElems = document.getElementsByName("difficulty");
+      for (let i = 0; i < diffElems.length; i++) {
+        if (diffElems[i].checked) {
+          difficulty = diffElems[i].value;
+          break;
+        }
+      }
+      if (difficulty === "최상") timeLimit = 20;
+      else if (difficulty === "상") timeLimit = 30;
+      else if (difficulty === "중") timeLimit = 40;
+      else timeLimit = 0; // 하(시간제한없음)
+
+      // 화면 전환
+      document.getElementById("startScreen").classList.add("hidden");
+      document.getElementById("gameScreen").classList.remove("hidden");
+
+      // 전체 게임 시간 측정 시작
+      gameTime = 0;
+      gameTimeInterval = setInterval(() => {
+        gameTime++;
+        document.getElementById("overallTime").innerText = `총 게임 시간: ${gameTime}초`;
+      }, 1000);
+
+      // 첫 문제 생성
+      generateProblem();
+    }
+
+    // ====== 문제 생성(무작위) ======
+    function generateProblem() {
+      // 에너지바 초기화
+      resetEnergyBar();
+
+      // 소수점 둘째 자리까지 무작위 숫자 2개 생성 (0.01 ~ 9.99)
+      // a >= b가 되도록 스왑
+      let a = parseFloat((Math.random() * 9.99).toFixed(2));
+      let b = parseFloat((Math.random() * 9.99).toFixed(2));
+      if (b > a) {
+        [a, b] = [b, a];
+      }
+
+      // 차이 계산 (소수 둘째 자리까지)
+      let diff = a - b;
+      // 혹시 0이 되면 다시 생성(문제에 따라 0을 원치 않는다면)
+      while (diff === 0) {
+        a = parseFloat((Math.random() * 9.99).toFixed(2));
+        b = parseFloat((Math.random() * 9.99).toFixed(2));
+        if (b > a) [a, b] = [b, a];
+        diff = a - b;
+      }
+
+      // 정답(끝에 0으로 끝나지 않도록 parseFloat 한 번 더)
+      correctAnswer = parseFloat(diff.toFixed(2));
+
+      // 화면 표시에 쓰일 문제 텍스트
+      const problemText = `\\(${a.toFixed(2)} - ${b.toFixed(2)} = \\)`;
+      document.getElementById("problemText").innerHTML = problemText;
+      document.getElementById("answerInput").value = "";
+
+      // MathJax 수식 재렌더링
+      if (window.MathJax) {
+        window.MathJax.Hub.Queue(["Typeset", MathJax.Hub, "problemText"]);
+      }
+
+      // 시간 제한(에너지바) 동작
+      if (timeLimit > 0) {
+        startEnergyBar();
+      }
+    }
+
+    // ====== 에너지바 초기화 ======
+    function resetEnergyBar() {
+      const energyBar = document.getElementById("energyBar");
+      energyBar.style.width = "100%";
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+    }
+
+    // ====== 에너지바 시작 ======
+    function startEnergyBar() {
+      let remainingTime = timeLimit;
+      const energyBar = document.getElementById("energyBar");
+
+      timer = setInterval(() => {
+        remainingTime -= 0.2; // 0.2초 간격으로 줄어드는 예시
+        if (remainingTime <= 0) {
+          clearInterval(timer);
+          timer = null;
+          // 시간 초과 시 기회 1 감소 후 다음 문제
+          chanceDown();
+          if (!isGameOver) {
+            generateProblem();
+          }
+        } else {
+          // 남은 시간 비율로 에너지바 길이 조정
+          const percentage = (remainingTime / timeLimit) * 100;
+          energyBar.style.width = percentage + "%";
+        }
+      }, 200); // 0.2초마다 업데이트
+    }
+
+    // ====== 정답 제출 버튼 클릭 ======
+    function submitAnswer() {
+      const userAnswer = parseFloat(document.getElementById("answerInput").value);
+      const feedback = document.getElementById("feedback");
+
+      if (isNaN(userAnswer)) {
+        feedback.innerText = "숫자로 입력해 주세요!";
+        return;
+      }
+
+      if (userAnswer === correctAnswer) {
+        // 정답
+        feedback.innerText = "정답입니다!";
+        addScore();
+        // 에너지바 초기화 후 다음 문제
+        if (timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+        generateProblem();
+      } else {
+        // 오답
+        feedback.innerText = `오답입니다! 정답은 ${correctAnswer} 입니다.`;
+        chanceDown();
+        if (!isGameOver) {
+          // 에너지바 초기화 후 다음 문제
+          if (timer) {
+            clearInterval(timer);
+            timer = null;
+          }
+          generateProblem();
+        }
+      }
+    }
+
+    // ====== 점수 추가(난이도별) ======
+    function addScore() {
+      let plus = 0;
+      if (difficulty === "최상") plus = 20;
+      else if (difficulty === "상") plus = 15;
+      else if (difficulty === "중") plus = 13;
+      else plus = 10; // 하
+      score += plus;
+      document.getElementById("scoreDisplay").innerText = `점수: ${score}`;
+    }
+
+    // ====== 기회 1 감소 ======
+    function chanceDown() {
+      chance--;
+      document.getElementById("chanceDisplay").innerText = `남은 기회: ${chance}`;
+      if (chance <= 0) {
+        endGame();
+      }
+    }
+
+    // ====== 게임 종료 처리 ======
+    function endGame() {
+      isGameOver = true;
+      // 타이머 정리
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      if (gameTimeInterval) {
+        clearInterval(gameTimeInterval);
+        gameTimeInterval = null;
+      }
+      // 게임 화면 -> 종료 화면
+      document.getElementById("gameScreen").classList.add("hidden");
+      document.getElementById("endScreen").classList.remove("hidden");
+      document.getElementById("finalScoreDisplay").innerText = `최종 점수: ${score}`;
+    }
+
+    // ====== 결과 서버 전송 ======
+    function sendResult() {
+      // saveData 함수 호출
+      saveData("소수의 뺄셈", playerName, score, gameTime);
+    }
+
+    // ====== 서버로 데이터 전송 함수(문제에서 주어진 코드) ======
+    async function saveData(game, name, score, elapsedTime) {
+      const FUNCTION_URL = "https://us-central1-record-f420d.cloudfunctions.net/report";
+
+      const requestData = {
+        game,
+        name,
+        score: parseInt(score, 10),
+        elapsedTime: parseInt(elapsedTime, 10)
+      };
+
+      try {
+        const response = await fetch(FUNCTION_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(requestData)
+        });
+
+        const responseData = await response.json();
+
+        if (response.ok) {
+          document.getElementById('response').innerText = 
+              `성공: ${JSON.stringify(responseData, null, 2)}`;
+        } else {
+          document.getElementById('response').innerText = 
+              `오류: ${JSON.stringify(responseData, null, 2)}`;
+        }
+      } catch (error) {
+        console.error('요청 실패:', error);
+        document.getElementById('response').innerText = 
+            `네트워크 오류: ${error.message}`;
+      }
+    }
+  </script>
+</body>
+</html>
